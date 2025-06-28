@@ -1,11 +1,9 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import cheerio from 'cheerio';
-import { ProxyAgent, fetch } from 'undici';
+import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
+import { load } from 'cheerio';
 
 const PORT = process.env.PORT || 3000;
-const proxyAgent = process.env.https_proxy ? new ProxyAgent(process.env.https_proxy) : undefined;
-
 const app = express();
 
 const limiter = rateLimit({ windowMs: 60_000, max: 30 });
@@ -17,7 +15,6 @@ app.get('/', (req, res) => {
   res.redirect(302, `/proxy?url=${encodeURIComponent(target)}`);
 });
 
-// helper to ensure url is within intuit domains
 function validateUrl(u) {
   try {
     const url = new URL(u);
@@ -37,7 +34,7 @@ function proxify(original, base) {
 }
 
 function rewriteHtml(html, base) {
-  const $ = cheerio.load(html);
+  const $ = load(html);
   const attrs = [
     ['a', 'href'],
     ['form', 'action'],
@@ -60,45 +57,32 @@ function rewriteHtml(html, base) {
   return $.html();
 }
 
-app.get('/proxy', async (req, res) => {
-  const target = req.query.url;
-  if (!target) return res.status(400).send('Missing url param');
-  const url = validateUrl(target);
+app.use('/proxy', (req, res, next) => {
+  const url = validateUrl(req.query.url);
   if (!url) return res.status(403).send('Forbidden');
-
-  const headers = {
-    'user-agent': req.headers['user-agent'] || '',
-    'accept-language': req.headers['accept-language'] || '',
-    cookie: req.headers['cookie'] || '',
-  };
-
-  try {
-    const response = await fetch(url.toString(), {
-      headers,
-      redirect: 'manual',
-      dispatcher: proxyAgent,
-    });
-
-    res.status(response.status);
-    res.set('X-Frame-Options', 'SAMEORIGIN');
-
-    const setCookie = response.headers.raw()['set-cookie'];
-    if (setCookie) res.set('Set-Cookie', setCookie);
-    const ctype = response.headers.get('content-type');
-    if (ctype) res.set('Content-Type', ctype);
-    const clen = response.headers.get('content-length');
-    if (clen) res.set('Content-Length', clen);
-
-    if (ctype && ctype.includes('text/html')) {
-      const text = await response.text();
-      res.send(rewriteHtml(text, url.toString()));
-    } else {
-      for await (const chunk of response.body) res.write(chunk);
-      res.end();
+  req.targetUrl = url;
+  next();
+}, createProxyMiddleware({
+  changeOrigin: true,
+  selfHandleResponse: true,
+  router: req => req.targetUrl.origin,
+  pathRewrite: (path, req) => req.targetUrl.pathname + req.targetUrl.search + req.targetUrl.hash,
+  onProxyReq: (proxyReq, req) => {
+    const headers = ['user-agent', 'accept-language', 'cookie'];
+    for (const h of headers) {
+      const val = req.headers[h];
+      if (val) proxyReq.setHeader(h, val);
     }
-  } catch {
-    res.status(502).send('Bad Gateway');
-  }
-});
+  },
+  onProxyRes: responseInterceptor(async (buffer, proxyRes, req, res) => {
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    const type = proxyRes.headers['content-type'] || '';
+    if (type.includes('text/html')) {
+      res.removeHeader('content-length');
+      return rewriteHtml(buffer.toString('utf8'), req.targetUrl.toString());
+    }
+    return buffer;
+  })
+}));
 
 app.listen(PORT, () => console.log(`proxy on :${PORT}`));
