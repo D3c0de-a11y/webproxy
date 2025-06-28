@@ -1,6 +1,6 @@
 # Intuit Web Proxy
 
-A minimal proxy hard-coded for the Intuit ecosystem.
+A minimal Express proxy limited to the Intuit ecosystem.
 
 ## Usage
 
@@ -14,18 +14,17 @@ Navigate to `http://localhost:3000/` and you'll be redirected to QuickBooks via 
 ## Environment variables
 
 - `PORT` – Port to listen on (default `3000`).
-- `https_proxy` – Optional outbound proxy for fetching Intuit sites.
 
 ## Deploying
 
 ### Replit
 
-1. Add a new Node.js Repl and copy the repo files.
+1. Create a Node.js Repl and copy the files.
 2. Set the `PORT` variable under **Secrets**.
-3. Start with `node server.js`.
+3. Run `node server.js`.
 
 ### Render
 
-1. Create a new Web Service from this repo.
-2. Set build command to `npm install` and start command to `node server.js`.
-3. Define `PORT` environment variable if you need a custom port.
+1. Create a Web Service from this repo.
+2. Build with `npm install` and start with `node server.js`.
+3. Define the `PORT` environment variable if custom.
